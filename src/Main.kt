@@ -1,15 +1,15 @@
 import java.io.File
 import java.util.*
 import java.util.regex.Pattern
-import kotlin.math.PI
-import kotlin.math.cos
-import kotlin.math.sin
+import java.util.stream.Collectors
+import kotlin.math.*
+import kotlin.time.measureTime
 
 fun main() {
 
-    val level = "level4"
+    val level = "level5"
 
-    File("input/$level").listFiles { _, filename -> filename.endsWith(".in") }!!.sortedBy { it.name }.forEach {
+    File("input/$level").listFiles { _, filename -> filename.endsWith("3.in") }!!.sortedBy { it.name }.forEach {
         val result = processFile(it)
         val joined = result.joinToString("\n")
 
@@ -32,11 +32,14 @@ fun scanner(text: String) = Scanner(text).apply {
 }
 
 data class Flight(
+    val id: Int,
     val origin: String,
     val destination: String,
     val takeoff: Int,
     val coordinates: Map<Int, Position>
 ) {
+
+    val landing = takeoff + coordinates.keys.last()
 
     fun getApproximatedPosition(timestamp: Int): Position {
         val timestampOffset = timestamp - takeoff
@@ -62,7 +65,13 @@ data class Flight(
             prev.alt + (next.alt - prev.alt) * factor
         )
     }
+
+    override fun toString(): String {
+        return "Flight(id=$id, origin='$origin', destination='$destination')"
+    }
 }
+
+data class TransferWindow(val flighta: Int, val flightb: Int, val delay: Int, val windowStart: Int, val windowEnd: Int)
 
 data class Position(
     val lat: Double,
@@ -72,9 +81,9 @@ data class Position(
 
 data class Vector(val x: Double, val y: Double, val z: Double)
 
-data class AirportFlights(val start: String, val destination: String, val count: Int)
-
-data class Request(val flightId: Int, val timestamp: Int)
+infix fun Vector.distance(other: Vector): Double {
+    return sqrt((x - other.x).pow(2) + (y - other.y).pow(2) + (z - other.z).pow(2))
+}
 
 val Double.rad: Double get() = PI * (this / 180)
 fun Position.toVector(): Vector {
@@ -98,24 +107,98 @@ fun loadFlight(flightId: Int): Flight {
         scanner.nextInt() to Position(scanner.nextDouble(), scanner.nextDouble(), scanner.nextDouble())
     }.toMap()
 
-    return Flight(origin, destination, takeoff, positions)
+    return Flight(flightId, origin, destination, takeoff, positions)
 }
 
 fun processFile(file: File): List<String> {
     println("processing ${file.name}...")
 
     val scanner = scanner(file.readText())
+
+    val transferRange = scanner.nextDouble()
+
     val count = scanner.nextInt()
-
-    val request = (0 until count).map {
-        Request(scanner.nextInt(), scanner.nextInt())
+    val flights = (0 until count).map {
+        loadFlight(scanner.nextInt())
     }
 
-    return request.map {
-        val flight = loadFlight(it.flightId)
-        val position = flight.getApproximatedPosition(it.timestamp)
-        return@map "${position.lat} ${position.lon} ${position.alt}"
-    }
+    val combinations = sequence {
+        flights.forEach { a ->
+            flights.forEach { b ->
+                if (a != b && a.destination != b.destination)
+                    yield(a to b)
+            }
+        }
+    }.toList()
+
+    val intersections = combinations.parallelStream().map { (a, b) ->
+        sequence {
+            val duration = measureTime {
+
+                val delayRange = max(0, (a.takeoff - b.landing))..min((a.landing - b.takeoff), 3600)
+                delayRange.map { delay ->
+                    var windowStart: Int? = null
+                    var windowEnd: Int? = null
+
+                    val bothInAir = if (a.takeoff > b.takeoff + delay) {
+                        if (a.landing < b.landing + delay) {
+                            a.takeoff..a.landing
+                        } else {
+                            a.takeoff..(b.landing + delay)
+                        }
+                    } else {
+                        if (a.landing < b.landing + delay) {
+                            (b.takeoff + delay)..a.landing
+                        } else {
+                            (b.takeoff + delay)..(b.landing + delay)
+                        }
+                    }
+
+                    bothInAir.forEach { timestamp ->
+                        val positionA = a.getApproximatedPosition(timestamp)
+
+                        if (positionA.alt > 6000) {
+                            val positionB = b.getApproximatedPosition(timestamp - delay)
+                            if (positionB.alt > 6000) {
+                                val distance = positionA.toVector() distance positionB.toVector()
+                                if (1000 <= distance && distance <= transferRange) {
+                                    if (windowStart == null) {
+                                        windowStart = timestamp
+                                    }
+                                    windowEnd = timestamp
+                                } else if (windowStart != null) {
+                                    yield(TransferWindow(a.id, b.id, delay, windowStart!!, windowEnd!!))
+                                    windowStart = null
+                                    windowEnd = null
+                                }
+                            } else if (windowStart != null) {
+                                yield(TransferWindow(a.id, b.id, delay, windowStart!!, windowEnd!!))
+                                windowStart = null
+                                windowEnd = null
+                            }
+                        } else if (windowStart != null) {
+                            yield(TransferWindow(a.id, b.id, delay, windowStart!!, windowEnd!!))
+                            windowStart = null
+                            windowEnd = null
+                        }
+                    }
+                }
+            }
+            println("$a to $b: $duration")
+        }.toList()
+    }.collect(Collectors.toList()).flatten()
+
+    return intersections
+        .groupBy { Triple(it.flighta, it.flightb, it.delay) }
+        .map {
+            val windowString = it.value.joinToString(" ") {
+                if (it.windowStart == it.windowEnd)
+                    it.windowStart.toString()
+                else
+                    "${it.windowStart}-${it.windowEnd}"
+            }
+            "${it.key.first} ${it.key.second} ${it.key.third} $windowString"
+        }
 
     /*
     val flights = (0 until count).map {
