@@ -1,12 +1,10 @@
 import java.io.File
 import java.util.*
 import java.util.regex.Pattern
-import kotlin.math.max
-import kotlin.math.min
 
 fun main() {
 
-    val level = "level1"
+    val level = "level2"
 
     File("input/$level").listFiles { _, filename -> filename.endsWith(".in") }!!.sortedBy { it.name }.forEach {
         val result = processFile(it)
@@ -25,7 +23,15 @@ fun main() {
     }
 }
 
-data class Position(val timestamp: Long, val lat: Float, val lon: Float, val alt: Float)
+data class Flight(
+    val timestamp: Long,
+    val lat: Float,
+    val lon: Float,
+    val alt: Float,
+    val start: String,
+    val destination: String,
+    val takeoff: Long
+)
 
 data class MinMax(
     val minTimestamp: Long,
@@ -38,6 +44,8 @@ data class MinMax(
     val maxAlt: Float
 )
 
+data class AirportFlights(val start: String, val destination: String, val count: Int)
+
 fun processFile(file: File): List<String> {
     println("processing ${file.name}...")
 
@@ -47,43 +55,27 @@ fun processFile(file: File): List<String> {
         useLocale(Locale.ROOT)
     }
     val count = scanner.nextInt()
-    scanner.nextLine()
 
-    val positions = (0 until count).map {
-        val pos = Position(scanner.nextLong(), scanner.nextFloat(), scanner.nextFloat(), scanner.nextFloat())
-        scanner.nextLine()
-        pos
-    }
-
-
-    val minMax = positions.fold(
-        MinMax(
-            Long.MAX_VALUE,
-            Long.MIN_VALUE,
-            Float.MAX_VALUE,
-            Float.MIN_VALUE,
-            Float.MAX_VALUE,
-            Float.MIN_VALUE,
-            Float.MAX_VALUE,
-            Float.MIN_VALUE
-        )
-    ) { acc, it ->
-        MinMax(
-            min(acc.minTimestamp, it.timestamp),
-            max(acc.maxTimestamp, it.timestamp),
-            min(acc.minLat, it.lat),
-            max(acc.maxLat, it.lat),
-            min(acc.minLon, it.lon),
-            max(acc.maxLon, it.lon),
-            min(acc.minAlt, it.alt),
-            max(acc.maxAlt, it.alt)
+    val flights = (0 until count).map {
+        Flight(
+            scanner.nextLong(),
+            scanner.nextFloat(),
+            scanner.nextFloat(),
+            scanner.nextFloat(),
+            scanner.next(),
+            scanner.next(),
+            scanner.nextLong()
         )
     }
 
-    return listOf(
-        "${minMax.minTimestamp} ${minMax.maxTimestamp}",
-        "${minMax.minLat} ${minMax.maxLat}",
-        "${minMax.minLon} ${minMax.maxLon}",
-        "${minMax.maxAlt}"
-    )
+    val groups = flights
+        .groupBy { it.start to it.destination }
+        .map { AirportFlights(it.key.first, it.key.second, it.value.map { it.takeoff }.distinct().count()) }
+        .sortedWith(
+            compareBy({ it.start }, { it.destination })
+        )
+
+    return groups.map {
+        "${it.start} ${it.destination} ${it.count}"
+    }
 }
